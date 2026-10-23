@@ -1,10 +1,15 @@
 //! Mock HTTP server for testing.
 
 use std::collections::HashMap;
-use hyper::{Body, Request, Response, Server};
-use hyper::service::{make_service_fn, service_fn};
+use http_body_util::Full;
+use hyper::body::{Bytes, Incoming};
 use hyper::http::StatusCode;
-use std::sync::{Arc, Mutex};
+use hyper::server::conn::http1;
+use hyper::service::service_fn;
+use hyper::{Request, Response};
+use hyper_util::rt::TokioIo;
+use std::convert::Infallible;
+use std::sync::Arc;
 use tokio::sync::RwLock;
 
 /// Mock HTTP response.
@@ -74,27 +79,25 @@ impl MockHttpServer {
     }
 
     /// Start the server.
-    pub async fn start(&mut self) -> hyper::Result<()> {
+    pub async fn start(&mut self) -> std::io::Result<()> {
         let responses = self.responses.clone();
 
-        let make_svc = make_service_fn(move |_conn| {
-            let responses = responses.clone();
-            async move {
-                Ok::<_, hyper::Error>(service_fn(move |req| {
-                    let responses = responses.clone();
-                    async move {
-                        Self::handle_request(req, responses).await
-                    }
-                }))
-            }
-        });
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0)).await?;
+        self.port = listener.local_addr()?.port();
 
-        let addr = ([127, 0, 0, 1], 0).into();
-        let server = Server::try_bind(&addr)?.serve(make_svc);
-
-        self.port = server.local_addr().port();
         let _ = tokio::spawn(async move {
-            server.await.unwrap();
+            while let Ok((stream, _)) = listener.accept().await {
+                let responses = responses.clone();
+                tokio::spawn(async move {
+                    let service = service_fn(move |req| {
+                        let responses = responses.clone();
+                        async move { Self::handle_request(req, responses).await }
+                    });
+                    let _ = http1::Builder::new()
+                        .serve_connection(TokioIo::new(stream), service)
+                        .await;
+                });
+            }
         });
 
         // Give server time to start
@@ -104,9 +107,9 @@ impl MockHttpServer {
     }
 
     async fn handle_request(
-        req: Request<Body>,
+        req: Request<Incoming>,
         responses: Arc<RwLock<HashMap<String, MockResponse>>>,
-    ) -> Result<Response<Body>, hyper::Error> {
+    ) -> Result<Response<Full<Bytes>>, Infallible> {
         let path = req.uri().path().to_string();
 
         let responses = responses.read().await;
@@ -121,7 +124,15 @@ impl MockHttpServer {
             builder = builder.header(key, value);
         }
 
-        Ok(builder.body(Body::from(mock_response.body)).unwrap())
+        // A status or header the test configured that http rejects is answered as a 500 naming the problem.
+        let response = builder
+            .body(Full::new(Bytes::from(mock_response.body)))
+            .unwrap_or_else(|error| {
+                let mut response = Response::new(Full::new(Bytes::from(error.to_string())));
+                *response.status_mut() = StatusCode::INTERNAL_SERVER_ERROR;
+                response
+            });
+        Ok(response)
     }
 }
 

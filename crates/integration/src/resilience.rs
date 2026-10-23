@@ -48,6 +48,19 @@ pub enum IntegrationError {
     Unknown(String),
 }
 
+/// Render an error as the hyper 0.14 / reqwest 0.11 stack did: its own text followed by every cause in
+/// its source chain, each after ": ". hyper 1 and reqwest 0.12 no longer print the cause in `Display`.
+pub(crate) fn error_text(err: &(dyn std::error::Error + 'static)) -> String {
+    let mut text = err.to_string();
+    let mut source = err.source();
+    while let Some(cause) = source {
+        text.push_str(": ");
+        text.push_str(&cause.to_string());
+        source = cause.source();
+    }
+    text
+}
+
 // From implementations for common error types
 impl From<serde_json::Error> for IntegrationError {
     fn from(err: serde_json::Error) -> Self {
@@ -57,13 +70,27 @@ impl From<serde_json::Error> for IntegrationError {
 
 impl From<hyper::Error> for IntegrationError {
     fn from(err: hyper::Error) -> Self {
-        IntegrationError::Network(err.to_string())
+        IntegrationError::Network(error_text(&err))
     }
 }
 
 impl From<hyper::http::Error> for IntegrationError {
     fn from(err: hyper::http::Error) -> Self {
         IntegrationError::Network(err.to_string())
+    }
+}
+
+impl From<hyper_util::client::legacy::Error> for IntegrationError {
+    fn from(err: hyper_util::client::legacy::Error) -> Self {
+        // hyper 0.14's Client surfaced the underlying hyper error itself; a failed connect read
+        // "error trying to connect: <cause>". The legacy client wraps both, so report the cause.
+        use std::error::Error as _;
+        let text = match err.source() {
+            Some(cause) if err.is_connect() => format!("error trying to connect: {}", error_text(cause)),
+            Some(cause) => error_text(cause),
+            None => err.to_string(),
+        };
+        IntegrationError::Network(text)
     }
 }
 

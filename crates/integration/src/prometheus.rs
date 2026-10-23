@@ -8,8 +8,12 @@ use crate::resilience::{HealthStatus, IntegrationError, IntegrationResult};
 use crate::{CircuitBreakerConfig, RateLimiterConfig, RetryConfig};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
+use http_body_util::{BodyExt, Full};
+use hyper::body::Bytes;
 use hyper::header::{CONTENT_TYPE, USER_AGENT};
-use hyper::{Body, Client, Method, Request};
+use hyper::{Method, Request};
+use hyper_util::client::legacy::{connect::HttpConnector, Client};
+use hyper_util::rt::TokioExecutor;
 use serde::Deserialize;
 use std::collections::HashMap;
 use tokio::sync::mpsc;
@@ -151,7 +155,7 @@ pub enum RelabelAction {
 /// Prometheus adapter implementation
 pub struct PrometheusAdapter {
     base: adapter::BaseAdapter,
-    client: Client<hyper::client::HttpConnector>,
+    client: Client<HttpConnector, Full<Bytes>>,
     base_url: String,
     #[allow(dead_code)] // stub retained by rescue pass
     auth: Option<(String, String)>,
@@ -183,7 +187,7 @@ impl PrometheusAdapter {
                 rate_limiter_config,
                 retry_config,
             ),
-            client: Client::new(),
+            client: Client::builder(TokioExecutor::new()).build_http(),
             base_url,
             auth: auth.map(|(u, p)| (u.into(), p.into())),
             headers,
@@ -233,10 +237,10 @@ impl PrometheusAdapter {
                     .method(Method::GET)
                     .uri(&url)
                     .header(CONTENT_TYPE, "application/json")
-                    .body(Body::from(
+                    .body(Full::new(Bytes::from(
                         serde_json::to_vec(&params)
                             .map_err(|e| IntegrationError::Unknown(e.to_string()))?,
-                    ))?;
+                    )))?;
 
                 let response = client.request(request).await?;
 
@@ -248,7 +252,7 @@ impl PrometheusAdapter {
                     )));
                 }
 
-                let body = hyper::body::to_bytes(response.into_body()).await?;
+                let body = response.into_body().collect().await?.to_bytes();
                 let response: PrometheusResponse = serde_json::from_slice(&body)?;
 
                 if response.status != "success" {
@@ -386,7 +390,7 @@ impl PrometheusAdapter {
                     .method(Method::GET)
                     .uri(&url)
                     .header(USER_AGENT, "rustops-integration/1.0")
-                    .body(Body::empty())?;
+                    .body(Full::new(Bytes::new()))?;
 
                 let response = client.request(request).await?;
 
@@ -398,7 +402,7 @@ impl PrometheusAdapter {
                     )));
                 }
 
-                let body = hyper::body::to_bytes(response.into_body()).await?;
+                let body = response.into_body().collect().await?.to_bytes();
                 Ok(String::from_utf8(body.to_vec())?)
             }
         })
@@ -423,7 +427,7 @@ impl PrometheusAdapter {
                 let request = Request::builder()
                     .method(Method::GET)
                     .uri(&url)
-                    .body(Body::empty())?;
+                    .body(Full::new(Bytes::new()))?;
 
                 let response = client.request(request).await?;
 
@@ -435,7 +439,7 @@ impl PrometheusAdapter {
                     )));
                 }
 
-                let body = hyper::body::to_bytes(response.into_body()).await?;
+                let body = response.into_body().collect().await?.to_bytes();
                 let response: LabelNamesResponse = serde_json::from_slice(&body)?;
 
                 if response.status != "success" {

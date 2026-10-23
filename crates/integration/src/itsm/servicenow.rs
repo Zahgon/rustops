@@ -135,13 +135,13 @@ impl ITSMNotifier for ServiceNowAdapter {
                     .json(&payload)
                     .send()
                     .await
-                    .map_err(|e| IntegrationError::Network(e.to_string()))?;
+                    .map_err(|e| IntegrationError::Network(crate::resilience::error_text(&e)))?;
 
                 if response.status().is_success() {
                     let result: ServiceNowResponse = response
                         .json()
                         .await
-                        .map_err(|e| IntegrationError::Deserialization(e.to_string()))?;
+                        .map_err(|e| IntegrationError::Deserialization(crate::resilience::error_text(&e)))?;
 
                     Ok(result.result.sys_id)
                 } else {
@@ -189,7 +189,7 @@ impl ITSMNotifier for ServiceNowAdapter {
                     .json(&payload)
                     .send()
                     .await
-                    .map_err(|e| IntegrationError::Network(e.to_string()))?;
+                    .map_err(|e| IntegrationError::Network(crate::resilience::error_text(&e)))?;
 
                 if response.status().is_success() {
                     Ok(())
@@ -224,13 +224,13 @@ impl ITSMNotifier for ServiceNowAdapter {
                         .headers(try_into_headers(headers)?)
                         .send()
                         .await
-                        .map_err(|e| IntegrationError::Network(e.to_string()))?;
+                        .map_err(|e| IntegrationError::Network(crate::resilience::error_text(&e)))?;
 
                     if response.status().is_success() {
                         response
                             .json()
                             .await
-                            .map_err(|e| IntegrationError::Deserialization(e.to_string()))
+                            .map_err(|e| IntegrationError::Deserialization(crate::resilience::error_text(&e)))
                     } else {
                         let error_text = response.text().await.unwrap_or_default();
                         Err(IntegrationError::ServiceUnavailable(error_text))
@@ -287,7 +287,7 @@ impl crate::adapter::IntegrationAdapter for ServiceNowAdapter {
                         .headers(try_into_headers(headers)?)
                         .send()
                         .await
-                        .map_err(|e| IntegrationError::Network(e.to_string()))?;
+                        .map_err(|e| IntegrationError::Network(crate::resilience::error_text(&e)))?;
 
                     if response.status().is_success() {
                         Ok(())

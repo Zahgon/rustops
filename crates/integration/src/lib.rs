@@ -97,3 +97,6 @@ impl Default for IntegrationConfig {
         }
     }
 }
+
+/// Prometheus series and label-value lookups.
+pub mod prometheus_series;

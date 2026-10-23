@@ -82,10 +82,10 @@ impl PrometheusAdapter {
                 request
                     .send()
                     .await
-                    .map_err(|e| IntegrationError::Network(e.to_string()))?
+                    .map_err(|e| IntegrationError::Network(crate::resilience::error_text(&e)))?
                     .json::<T>()
                     .await
-                    .map_err(|e| IntegrationError::Deserialization(e.to_string()))
+                    .map_err(|e| IntegrationError::Deserialization(crate::resilience::error_text(&e)))
             }
         })
         .await
