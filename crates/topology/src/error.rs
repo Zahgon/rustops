@@ -315,9 +315,22 @@ impl Error {
     }
 }
 
+/// Render an error as reqwest 0.11 did: its own text followed by its cause chain, each after ": ".
+/// reqwest 0.12 no longer prints the cause in `Display`.
+pub(crate) fn error_text(err: &(dyn std::error::Error + 'static)) -> String {
+    let mut text = err.to_string();
+    let mut source = err.source();
+    while let Some(cause) = source {
+        text.push_str(": ");
+        text.push_str(&cause.to_string());
+        source = cause.source();
+    }
+    text
+}
+
 impl From<reqwest::Error> for Error {
     fn from(err: reqwest::Error) -> Self {
-        Error::Network(err.to_string())
+        Error::Network(error_text(&err))
     }
 }
 

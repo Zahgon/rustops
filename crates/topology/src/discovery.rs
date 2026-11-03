@@ -876,11 +876,17 @@ impl PrometheusDiscovery {
             .send()
             .await
             .map_err(|e| {
-                rustops_common::Error::network(format!("Failed to query Prometheus: {}", e))
+                rustops_common::Error::network(format!(
+                    "Failed to query Prometheus: {}",
+                    crate::error::error_text(&e)
+                ))
             })?;
 
         let response = response.json::<PrometheusResponse>().await.map_err(|e| {
-            rustops_common::Error::network(format!("Failed to parse Prometheus response: {}", e))
+            rustops_common::Error::network(format!(
+                "Failed to parse Prometheus response: {}",
+                crate::error::error_text(&e)
+            ))
         })?;
 
         Ok(response)

@@ -1,3 +1,8 @@
+use axum::body::HttpBody;
+use axum::extract::Request;
+use axum::http::{header, HeaderValue, Method};
+use axum::middleware::{self, Next};
+use axum::response::Response;
 use axum::{http::StatusCode, response::Json, routing::get, Router};
 use serde::Serialize;
 use std::net::SocketAddr;
@@ -66,6 +71,35 @@ fn create_router() -> Router {
         .nest("/api/v1", v1_router())
         .layer(CorsLayer::permissive())
         .layer(TraceLayer::new_for_http())
+        .layer(middleware::from_fn(legacy_wire_shape))
+}
+
+/// Keep the response head the axum 0.7 / tower-http 0.5 stack put on the wire.
+///
+/// - tower-http 0.5 emitted `Access-Control-Allow-Origin` first on CORS preflight answers; 0.6 emits it
+///   after `Vary` and the allow-methods/allow-headers pair.
+/// - axum 0.7 answered a HEAD request whose response has an empty body with `Content-Length: 0`; axum 0.8
+///   sends no length for it (the unrouted fallback, for instance).
+async fn legacy_wire_shape(request: Request, next: Next) -> Response {
+    let head = request.method() == Method::HEAD;
+    let mut response = next.run(request).await;
+    let empty = response.body().size_hint().exact() == Some(0);
+    let headers = response.headers_mut();
+    if headers.contains_key(header::ACCESS_CONTROL_ALLOW_METHODS) {
+        if let Some(origin) = headers.remove(header::ACCESS_CONTROL_ALLOW_ORIGIN) {
+            let rest = std::mem::take(headers);
+            headers.insert(header::ACCESS_CONTROL_ALLOW_ORIGIN, origin);
+            headers.extend(rest);
+        }
+    }
+    if head
+        && empty
+        && !headers.contains_key(header::CONTENT_LENGTH)
+        && !headers.contains_key(header::TRANSFER_ENCODING)
+    {
+        headers.insert(header::CONTENT_LENGTH, HeaderValue::from_static("0"));
+    }
+    response
 }
 
 /// API v1 router (placeholder for future endpoints)
